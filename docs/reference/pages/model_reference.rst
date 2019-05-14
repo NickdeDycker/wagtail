@@ -36,6 +36,13 @@ Database fields
 
         For example: ``http://domain.com/blog/[my-slug]/``
 
+    .. attribute:: sort_title
+
+        (text)
+
+        This is used to order the children of the page. The field is built from the function `build_sort_title`.
+
+
     .. attribute:: content_type
 
         (foreign key to ``django.contrib.contenttypes.models.ContentType``)
@@ -116,6 +123,8 @@ In addition to the model fields provided, ``Page`` has many properties and metho
     .. autoattribute:: specific
 
     .. autoattribute:: specific_class
+
+    .. autoattribute:: build_sort_title
 
     .. automethod:: get_url
 
