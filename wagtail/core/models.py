@@ -242,6 +242,10 @@ class Page(AbstractPage, index.Indexed, ClusterableModel, metaclass=PageBase):
         max_length=255,
         help_text=_("The name of the page as it will appear in URLs e.g http://domain.com/blog/[my-slug]/")
     )
+    sort_title = models.CharField(
+        verbose_name=_('sorting title'),
+        max_length=255,
+    )
     content_type = models.ForeignKey(
         'contenttypes.ContentType',
         verbose_name=_('content type'),
@@ -349,6 +353,11 @@ class Page(AbstractPage, index.Indexed, ClusterableModel, metaclass=PageBase):
     # An array of additional field names that will not be included when a Page is copied.
     exclude_fields_in_copy = []
 
+    # Define on which fields Page instances should be ordered. Use the function build_sort_title to manipulate the
+    # field. Set node_order_by to [] for incremental and manual ordering. Changing the value after creating child pages
+    # might corrupt the database. (Issue #882)
+    node_order_by = ['sort_title', ]
+
     # Define these attributes early to avoid masking errors. (Issue #3078)
     # The canonical definition is in wagtailadmin.edit_handlers.
     content_panels = []
@@ -369,6 +378,10 @@ class Page(AbstractPage, index.Indexed, ClusterableModel, metaclass=PageBase):
                 self.show_in_menus = self.show_in_menus_default
 
     def __str__(self):
+        return self.title
+
+    def build_sort_title(self):
+        """ Return the value of sort_title. The function allows for sorting on multiple fields. """
         return self.title
 
     def set_url_path(self, parent):
@@ -417,6 +430,10 @@ class Page(AbstractPage, index.Indexed, ClusterableModel, metaclass=PageBase):
 
     def full_clean(self, *args, **kwargs):
         # Apply fixups that need to happen before per-field validation occurs
+        new_sort_title = self.build_sort_title()
+        if not hasattr(self, '_sort_title_changed'):
+            self._sort_title_changed = new_sort_title != self.sort_title
+        self.sort_title = new_sort_title
 
         if not self.slug:
             # Try to auto-populate slug from title
@@ -436,53 +453,56 @@ class Page(AbstractPage, index.Indexed, ClusterableModel, metaclass=PageBase):
         if not Page._slug_is_available(self.slug, self.get_parent(), self):
             raise ValidationError({'slug': _("This slug is already in use")})
 
-    @transaction.atomic
     # ensure that changes are only committed when we have updated all descendant URL paths, to preserve consistency
     def save(self, *args, **kwargs):
-        self.full_clean()
+        with transaction.atomic():
+            self.full_clean()
 
-        update_descendant_url_paths = False
-        is_new = self.id is None
+            update_descendant_url_paths = False
+            is_new = self.id is None
 
-        if is_new:
-            # we are creating a record. If we're doing things properly, this should happen
-            # through a treebeard method like add_child, in which case the 'path' field
-            # has been set and so we can safely call get_parent
-            self.set_url_path(self.get_parent())
-        else:
-            # Check that we are committing the slug to the database
-            # Basically: If update_fields has been specified, and slug is not included, skip this step
-            if not ('update_fields' in kwargs and 'slug' not in kwargs['update_fields']):
-                # see if the slug has changed from the record in the db, in which case we need to
-                # update url_path of self and all descendants
-                old_record = Page.objects.get(id=self.id)
-                if old_record.slug != self.slug:
-                    self.set_url_path(self.get_parent())
-                    update_descendant_url_paths = True
-                    old_url_path = old_record.url_path
-                    new_url_path = self.url_path
+            if is_new:
+                # we are creating a record. If we're doing things properly, this should happen
+                # through a treebeard method like add_child, in which case the 'path' field
+                # has been set and so we can safely call get_parent
+                self.set_url_path(self.get_parent())
+            else:
+                # Check that we are committing the slug to the database
+                # Basically: If update_fields has been specified, and slug is not included, skip this step
+                if not ('update_fields' in kwargs and 'slug' not in kwargs['update_fields']):
+                    # see if the slug has changed from the record in the db, in which case we need to
+                    # update url_path of self and all descendants
+                    old_record = Page.objects.get(id=self.id)
+                    if old_record.slug != self.slug:
+                        self.set_url_path(self.get_parent())
+                        update_descendant_url_paths = True
+                        old_url_path = old_record.url_path
+                        new_url_path = self.url_path
 
-        result = super().save(*args, **kwargs)
+            result = super().save(*args, **kwargs)
 
-        if update_descendant_url_paths:
-            self._update_descendant_url_paths(old_url_path, new_url_path)
+            if update_descendant_url_paths:
+                self._update_descendant_url_paths(old_url_path, new_url_path)
 
-        # Check if this is a root page of any sites and clear the 'wagtail_site_root_paths' key if so
-        if Site.objects.filter(root_page=self).exists():
-            cache.delete('wagtail_site_root_paths')
+            # Check if this is a root page of any sites and clear the 'wagtail_site_root_paths' key if so
+            if Site.objects.filter(root_page=self).exists():
+                cache.delete('wagtail_site_root_paths')
 
-        # Log
-        if is_new:
-            cls = type(self)
-            logger.info(
-                "Page created: \"%s\" id=%d content_type=%s.%s path=%s",
-                self.title,
-                self.id,
-                cls._meta.app_label,
-                cls.__name__,
-                self.url_path
-            )
+            # Log
+            if is_new:
+                cls = type(self)
+                logger.info(
+                    "Page created: \"%s\" id=%d content_type=%s.%s path=%s",
+                    self.title,
+                    self.id,
+                    cls._meta.app_label,
+                    cls.__name__,
+                    self.url_path
+                )
 
+        if getattr(self, '_sort_title_changed', False):
+            super(Page, self).move(target=self.get_parent(), pos='sorted-child')
+            self.refresh_from_db()
         return result
 
     def delete(self, *args, **kwargs):
@@ -1039,7 +1059,14 @@ class Page(AbstractPage, index.Indexed, ClusterableModel, metaclass=PageBase):
         Extension to the treebeard 'move' method to ensure that url_path is updated too.
         """
         old_url_path = Page.objects.get(id=self.id).url_path
-        super().move(target, pos=pos)
+
+        # If ordering by field is not set in node_order_by or the target has no children,
+        # treebeard can ignore ordering.
+        if target.is_leaf() or len(self.node_order_by) == 0:
+            super().move(target, pos=pos)
+        else:
+            super().move(target, pos='sorted-child')
+
         # treebeard's move method doesn't actually update the in-memory instance, so we need to work
         # with a freshly loaded one now
         new_self = Page.objects.get(id=self.id)

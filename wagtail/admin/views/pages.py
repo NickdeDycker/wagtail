@@ -65,7 +65,7 @@ def index(request, parent_page_id=None):
     )
 
     # Get page ordering
-    ordering = request.GET.get('ordering', '-latest_revision_created_at')
+    ordering = request.GET.get('ordering', 'ord')
     if ordering not in [
         'title',
         '-title',

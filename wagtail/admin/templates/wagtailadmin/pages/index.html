@@ -1,7 +1,7 @@
 {% extends "wagtailadmin/base.html" %}
 {% load wagtailadmin_tags static i18n %}
 {% block titletag %}{% blocktrans with title=parent_page.get_admin_display_title %}Exploring {{ title }}{% endblocktrans %}{% endblock %}
-{% block bodyclass %}page-explorer {% if ordering == 'ord' %}reordering{% endif %}{% endblock %}
+{% block bodyclass %}page-explorer {% if ordering == 'ord' and not parent_page.node_order_by %}reordering{% endif %}{% endblock %}
 
 {% block content %}
     <header class="merged no-border nice-padding no-v-padding">
@@ -14,7 +14,12 @@
         {% csrf_token %}
 
         {% page_permissions parent_page as parent_page_perms %}
-        {% include "wagtailadmin/pages/listing/_list_explore.html" with sortable=1 sortable_by_type=1 full_width=1 show_ordering_column=1 parent_page=parent_page orderable=parent_page_perms.can_reorder_children %}
+
+        {% if not parent_page.node_order_by %}
+            {% include "wagtailadmin/pages/listing/_list_explore.html" with sortable=1 sortable_by_type=1 full_width=1 show_ordering_column=1 parent_page=parent_page orderable=parent_page_perms.can_reorder_children %}
+        {% else %}
+            {% include "wagtailadmin/pages/listing/_list_explore.html" with sortable=1 sortable_by_type=1 full_width=1 show_ordering_column=0 parent_page=parent_page orderable=parent_page_perms.can_reorder_children %}
+        {% endif %}
 
         {% if do_paginate %}
             {% url 'wagtailadmin_explore' parent_page.id as pagination_base_url %}
@@ -31,7 +36,7 @@
     <script src="{% static 'wagtailadmin/js/privacy-switch.js' %}"></script>
 
     <script type="text/javascript">
-        {% if ordering == 'ord' %}
+        {% if ordering == 'ord' and not parent_page.node_order_by %}
             $(function() {
                 var reorderCount = 0;
                 var orderform = $('#page-reorder-form');
