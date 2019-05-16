@@ -492,29 +492,23 @@ Page QuerySet ordering
         class Meta:
             ordering = ('-publication_date', )  # will not work
 
-This is because ``Page`` enforces ordering QuerySets by path. By default, this will be the same as ordering by title.
-This behaviour can be changed by overwriting ``build_sort_title``.
+This is because ``Page`` enforces ordering QuerySets by path. By default, Page objects are ordered in the order they are
+created, with the option to manually reorder in the admin. This behaviour can be changed on a per model basis, by setting
+``node_order_by = ['sort_title', ]`` and using ``build_sort_title`` to set the value to sort on.
 
 .. code-block:: python
 
     class NewsItemPage(Page):
+        node_order_by = ['sort_title', ]
         publication_date = models.DateField()
 
         def build_sort_title(self):
             return self.publication_date
 
-To have ``Page`` instances order as they are created and allow for manual ordering, you can ignore ``sort_title`` and
-set ``node_order_by = []``.
-
-.. code-block:: python
-
-    class NewsItemPage(Page):
-        node_order_by = []
-
 .. note:: Changing the ordering
 
     The ``Page`` objects are ordered as they enter the database.
-    This means that if you change the order, you possibly corrupt the database.
+    This means that if you change the order, you can't let them reorder and new pages are ordered per the new ordering.
 
 .. _custom_page_managers:
 
